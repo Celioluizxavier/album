@@ -1,5 +1,5 @@
 // ===== CONFIGURE AQUI (Supabase > Project Settings > API) =====
-const CFG={url:'COLE_A_PROJECT_URL',key:'COLE_A_ANON_PUBLIC_KEY',name:'Galeria Privada'};
+const CFG={url:'COLE_A_PROJECT_URL',key:'sb_publishable_Tr1MF1ATjE0q2kID7yTxXA_ss7PIdTP',name:'Galeria Privada'};
 // ===============================================================
 const sb=supabase.createClient(CFG.url,CFG.key);
 const $=s=>document.querySelector(s);
