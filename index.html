@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Galeria Privada</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.cell{position:relative;min-height:120px;cursor:zoom-in}
+.cell.big{position:fixed;inset:0;z-index:20;background:#000d;display:grid;place-items:center;cursor:zoom-out;padding:12px}
+.cell.big canvas{max-height:94vh;width:auto}
+.ph{display:grid;place-items:center;height:160px;color:var(--mu)}
+body.hide main{filter:blur(40px);pointer-events:none}
+</style></head><body>
+<header><span class="logo" id="lg">Galeria Privada</span><span id="who" class="row muted"></span></header>
+<main id="app"></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="app.js"></script>
+<script>
+let P;
+const log=(event,detail='')=>P&&sb.from('logs').insert({user_id:P.id,email:P.email,event,detail}).then(()=>{});
+const stamp=()=>new Date().toLocaleString('pt-BR');
+function wm(c,lite){ // marca d'água gravada nos pixels: tiles discretos + identificação no centro
+ const x=c.getContext('2d'),w=c.width,h=c.height,id=P.id.slice(0,8).toUpperCase(),t=P.email;
+ if(!lite){const f=Math.max(12,w/55);x.save();x.translate(w/2,h/2);x.rotate(-.5);x.font=`600 ${f}px sans-serif`;x.textAlign='center';x.fillStyle='rgba(255,255,255,.10)';
+  for(let i=-8;i<=8;i++)for(let j=-5;j<=5;j++)x.fillText(t,j*f*t.length*.75+(i%2)*f*6,i*f*3.4);x.restore()}
+ const s=Math.max(16,w/24);x.textAlign='center';x.lineWidth=Math.max(2,s/9);x.strokeStyle='rgba(0,0,0,.35)';x.fillStyle='rgba(255,255,255,.42)';
+ x.font=`700 ${s}px sans-serif`;x.strokeText(t,w/2,h/2);x.fillText(t,w/2,h/2);
+ x.font=`600 ${s*.6}px sans-serif`;const l=`ID ${id} · ${stamp()}`;x.strokeText(l,w/2,h/2+s*.95);x.fillText(l,w/2,h/2+s*.95)}
+const url=async(p,t=600)=>(await sb.storage.from('media').createSignedUrl(p,t)).data?.signedUrl;
+async function draw(m,box){
+ const u=await url(m.path);if(!u)return box.textContent='Indisponível';
+ if(m.kind==='image'){const im=await createImageBitmap(await(await fetch(u)).blob()),s=Math.min(1,1600/im.width),c=document.createElement('canvas');
+  c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);wm(c);box.replaceChildren(c);im.close?.()}
+ else video(u,box)}
+function video(u,box){
+ const v=document.createElement('video'),c=document.createElement('canvas'),x=c.getContext('2d'),bar=document.createElement('div');
+ v.src=u;v.playsInline=true;v.disablePictureInPicture=true;v.setAttribute('controlsList','nodownload');v.style.cssText='position:absolute;width:1px;height:1px;opacity:0';
+ c.width=1280;c.height=720;v.onloadedmetadata=()=>{c.width=v.videoWidth;c.height=v.videoHeight;v.currentTime=.1};
+ bar.className='row';bar.onclick=e=>e.stopPropagation();bar.innerHTML='<button class="s">▶ / ⏸</button><input type="range" min="0" max="1000" value="0" style="flex:1">';
+ const[bt,rg]=bar.children;bt.onclick=()=>v.paused?v.play():v.pause();rg.oninput=()=>v.currentTime=v.duration*rg.value/1000;
+ box.classList.add('vid');box.style.cursor='default';box.replaceChildren(v,c,bar);
+ requestAnimationFrame(function f(){if(!document.body.contains(box))return v.pause();x.drawImage(v,0,0,c.width,c.height);wm(c,true);if(v.duration&&document.activeElement!==rg)rg.value=v.currentTime/v.duration*1000;requestAnimationFrame(f)})}
+async function boot(){
+ P=await me();const a=$('#app');
+ if(!P)return auth(a,boot);
+ if(P.status!=='active'){a.innerHTML=`<div class="card auth"><h2>${{pending:'Aguardando aprovação',blocked:'Acesso bloqueado',banned:'Conta banida'}[P.status]}</h2><p class="muted">${P.status==='pending'?'Seu cadastro foi recebido. Você será avisado quando for liberado.':'Fale com o administrador para saber mais.'}</p><button class="s" onclick="out()">Sair</button></div>`;return}
+ $('#who').innerHTML=`${esc(P.email)} <button class="s" onclick="out()">Sair</button>`;list()}
+async function list(){
+ const{data}=await sb.from('albums').select('*,media(count)').order('created_at',{ascending:false});
+ $('#app').innerHTML=`<h2>Seus álbuns</h2>`+(data?.length?`<div class="grid">${data.map(a=>`<div class="card alb" onclick="open_('${a.id}','${esc(a.title).replace(/'/g,'')}')"><h3 style="margin:0">${esc(a.title)}</h3><span class="muted">${a.media[0].count} arquivos</span></div>`).join('')}</div>`:'<p class="muted">Nenhum álbum liberado para você ainda.</p>')}
+async function open_(id,title){
+ log('abriu_album',title);
+ const{data}=await sb.from('media').select('*').eq('album_id',id).order('pos');
+ $('#app').innerHTML=`<div class="row"><button class="s" onclick="list()">← Álbuns</button><h2 style="margin:0">${title}</h2></div><div class="grid" id="g" style="margin-top:16px"></div>`;
+ const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){io.unobserve(e.target);draw(e.target._m,e.target).catch(()=>e.target.textContent='Erro')}}),{rootMargin:'300px'});
+ data.forEach(m=>{const d=document.createElement('div');d.className='card cell';d._m=m;d.innerHTML='<div class="ph">Carregando…</div>';
+  d.onclick=()=>{if(!d.classList.contains('vid')||d.classList.contains('big'))d.classList.toggle('big')};$('#g').append(d);io.observe(d)})}
+// ---- dissuasão (não impede captura de tela; a marca d'água é a proteção real) ----
+['contextmenu','dragstart','copy','cut','selectstart'].forEach(e=>addEventListener(e,ev=>{if(ev.target.tagName!=='INPUT')ev.preventDefault()}));
+addEventListener('keydown',e=>{const k=e.key.toLowerCase(),m=e.ctrlKey||e.metaKey;
+ if(e.key==='PrintScreen'||e.key==='F12'||(m&&['s','p','u'].includes(k))||(m&&e.shiftKey&&['i','j','c','s'].includes(k))){e.preventDefault();navigator.clipboard?.writeText('');document.body.classList.add('hide');log('tecla_bloqueada',e.key);setTimeout(()=>document.body.classList.remove('hide'),2500)}});
+const hide=h=>document.body.classList.toggle('hide',h);
+addEventListener('blur',()=>hide(1));addEventListener('focus',()=>hide(0));
+document.addEventListener('visibilitychange',()=>hide(document.hidden));
+setInterval(()=>{if(P&&(outerWidth-innerWidth>200||outerHeight-innerHeight>200)){hide(1);log('devtools_aberto')}},3000);
+boot();
+</script></body></html>

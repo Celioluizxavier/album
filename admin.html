@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Administração</title>
+<link rel="stylesheet" href="style.css"></head><body>
+<header><span class="logo">Administração</span><span id="who" class="row muted"></span></header>
+<main><div class="tabs" id="tabs" hidden>
+<button data-t="u" onclick="show('u')">Usuários</button><button data-t="a" class="s" onclick="show('a')">Álbuns</button><button data-t="l" class="s" onclick="show('l')">Registros</button></div>
+<div id="app"></div><div id="v"></div></main><dialog id="dlg"></dialog>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="app.js"></script>
+<script>
+let P;const B='media';
+async function boot(){P=await me();
+ if(!P)return auth($('#app'),boot);
+ if(!P.is_admin){$('#app').innerHTML='<div class="card auth"><h2>Acesso negado</h2><button class="s" onclick="out()">Sair</button></div>';return}
+ $('#app').innerHTML='';$('#tabs').hidden=false;$('#who').innerHTML=`${esc(P.email)} <button class="s" onclick="out()">Sair</button>`;show('u')}
+function show(t){document.querySelectorAll('#tabs button').forEach(b=>b.className=b.dataset.t===t?'':'s');({u:users,a:albums,l:logs})[t]()}
+// ---------- Usuários ----------
+async function users(){
+ const{data}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
+ const A=(id,s,l,c)=>`<button class="${c}" onclick="st('${id}','${s}')">${l}</button>`;
+ $('#v').innerHTML=`<div class="card" style="overflow:auto"><table><tr><th>Usuário<th>Status<th>Ações</tr>${data.map(u=>`<tr><td>${esc(u.name)||'—'}<br><span class="muted">${esc(u.email)}</span><td><span class="b ${u.status}">${{active:'ativo',pending:'pendente',blocked:'bloqueado',banned:'banido'}[u.status]}</span><td><div class="row">${u.is_admin?'<span class="muted">administrador</span>':(u.status!=='active'?A(u.id,'active',u.status==='pending'?'Aprovar':'Reativar','g'):A(u.id,'blocked','Bloquear','w'))+(u.status!=='banned'?A(u.id,'banned','Banir','d'):'')+`<button class="s" onclick="acc('${u.id}')">Álbuns</button>`}</div></tr>`).join('')}</table></div>`}
+async function st(id,s){if(s==='banned'&&!confirm('Banir este usuário?'))return;await sb.from('profiles').update({status:s}).eq('id',id);users()}
+async function acc(uid){
+ const[{data:al},{data:ac}]=await Promise.all([sb.from('albums').select('id,title'),sb.from('access').select('album_id').eq('user_id',uid)]);
+ const has=new Set(ac.map(a=>a.album_id)),d=$('#dlg');
+ d.innerHTML=`<h3>Álbuns liberados</h3>${al.map(a=>`<label class="row"><input type="checkbox" style="width:auto" value="${a.id}" ${has.has(a.id)?'checked':''}>${esc(a.title)}</label>`).join('')||'<p class="muted">Crie um álbum primeiro.</p>'}<div class="row" style="margin-top:12px"><button id="sv">Salvar</button><button class="s" onclick="dlg.close()">Fechar</button></div>`;d.showModal();
+ $('#sv').onclick=async()=>{const ids=[...d.querySelectorAll('input:checked')].map(i=>i.value);await sb.from('access').delete().eq('user_id',uid);if(ids.length)await sb.from('access').insert(ids.map(a=>({album_id:a,user_id:uid})));d.close()}}
+// ---------- Álbuns ----------
+async function albums(){
+ const{data}=await sb.from('albums').select('*,media(*)').order('created_at',{ascending:false});
+ const paths=data.flatMap(a=>a.media.filter(m=>m.kind==='image').map(m=>m.path)),U={};
+ if(paths.length){const{data:s}=await sb.storage.from(B).createSignedUrls(paths,3600);(s||[]).forEach(x=>U[x.path]=x.signedUrl)}
+ $('#v').innerHTML=`<div class="card row"><input id="nt" placeholder="Título do novo álbum" style="flex:1;margin:0"><button onclick="mk()">Criar álbum</button></div>`+data.map(a=>`<div class="card" style="margin-top:16px"><div class="row"><h3 style="flex:1;margin:0">${esc(a.title)}</h3><button class="s" onclick="rn('${a.id}')">Renomear</button><button class="d" onclick="rm('${a.id}')">Excluir</button></div><input type="file" multiple accept="image/*,video/*" onchange="up('${a.id}',this)"><div class="muted" id="pg${a.id}"></div><div class="grid" style="margin-top:10px">${a.media.sort((x,y)=>x.pos-y.pos).map(m=>`<div>${m.kind==='image'?`<img src="${U[m.path]}" style="width:100%;height:130px;object-fit:cover;border-radius:8px">`:'<div class="card" style="height:130px;display:grid;place-items:center">Vídeo</div>'}<div class="row" style="margin-top:6px"><button class="s" onclick="mv('${a.id}','${m.id}',-1)">◀</button><button class="s" onclick="mv('${a.id}','${m.id}',1)">▶</button><button class="d" onclick="dm('${m.id}','${m.path}')">Remover</button></div></div>`).join('')}</div></div>`).join('')}
+async function mk(){const t=$('#nt').value.trim();if(!t)return;await sb.from('albums').insert({title:t});albums()}
+async function rn(id){const t=prompt('Novo título:');if(t){await sb.from('albums').update({title:t}).eq('id',id);albums()}}
+async function rm(id){if(!confirm('Excluir álbum e todos os arquivos?'))return;const{data}=await sb.from('media').select('path').eq('album_id',id);if(data.length)await sb.storage.from(B).remove(data.map(m=>m.path));await sb.from('albums').delete().eq('id',id);albums()}
+async function dm(id,p){if(!confirm('Remover arquivo?'))return;await sb.storage.from(B).remove([p]);await sb.from('media').delete().eq('id',id);albums()}
+async function mv(a,id,d){const{data}=await sb.from('media').select('id').eq('album_id',a).order('pos');const i=data.findIndex(x=>x.id==id),j=i+d;if(j<0||j>=data.length)return;[data[i],data[j]]=[data[j],data[i]];await Promise.all(data.map((x,k)=>sb.from('media').update({pos:k}).eq('id',x.id)));albums()}
+async function up(a,inp){
+ const{data:l}=await sb.from('media').select('pos').eq('album_id',a).order('pos',{ascending:false}).limit(1);let pos=(l[0]?.pos??-1)+1,n=0;
+ for(const f of inp.files){$('#pg'+a).textContent=`Enviando ${++n}/${inp.files.length}: ${f.name}`;
+  const path=`${a}/${crypto.randomUUID()}.${f.name.split('.').pop().toLowerCase()}`;
+  const r=await sb.storage.from(B).upload(path,f,{contentType:f.type});if(r.error){alert(f.name+': '+r.error.message);continue}
+  await sb.from('media').insert({album_id:a,path,kind:f.type.startsWith('video')?'video':'image',pos:pos++})}
+ albums()}
+// ---------- Registros ----------
+async function logs(){
+ const{data}=await sb.from('logs').select('*').order('at',{ascending:false}).limit(200);
+ $('#v').innerHTML=`<div class="card" style="overflow:auto"><table><tr><th>Quando<th>Usuário<th>Evento<th>Detalhe</tr>${data.map(l=>`<tr><td>${new Date(l.at).toLocaleString('pt-BR')}<td>${esc(l.email)}<td>${esc(l.event)}<td>${esc(l.detail)}</tr>`).join('')||'<tr><td colspan=4 class="muted">Sem registros.</tr>'}</table></div>`}
+boot();
+</script></body></html>
